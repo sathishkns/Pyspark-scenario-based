@@ -1,0 +1,243 @@
+def update_email(s):
+  print("== email to be updated: " + s)
+  return F.col(s)
+  
+def split_col(col_name,delim):
+	print(col_name)
+	return F.split(F.col(col_name),delim)
+  
+df=spark.read.format('csv').option('delimiter','|').option('header','true').load('/data/sample4.csv')
+df=df.withColumn("updatedemail",update_email("email")).show(truncate=False)
+
+
+df=spark.read.csv("/data/sample.csv",sep="|",header=True)
+df=df.withColumn("temp_explode",F.explode(split_col("value",";")))
+
+
+
+def update_email(email):
+  print("== email to be updated: " + email)
+  return F.concat(F.substring(F.col(email), -8, 8),F.date_format(F.current_timestamp(),"yyyy MM dd"), F.lit("_updated"))
+  
+  
+  [F.col(f) == F.col(s) for (f, s) in zip(columnsFirstDf, columnsSecondDf)]
+  
+  df_csv = df.select(F.from_csv(df.value, schema_str, options).alias("value_parsed"))
+  
+  
+  s_df = spark.createDataFrame([("Virat is good batsman", 1),
+                                   ("sachin was good", 2),
+                                   ("but modi sucks big big time", 3),
+                                   ("I love the formulas", 4)], ('k', 'v'))
+								   
+	df = spark.createDataFrame([("Virat is good batsman", 1),
+                                   ("sachin was good", 2),
+                                   ("but modi sucks big big time", 3),
+                                   ("I love the formulas", 4)], ('k', 'v'))
+								   
+								   df=df.select('k',F.split(F.col('k'),' ').alias('col_len')).show()
+								   
+								   arr_cols = [F.split('k', ' ')[i].alias('k' + str(i+1)) for i in range(F.length(F.col('k')))]
+								   
+								   
+Input Dataset (TableA):
+========================================
+Year  Product    Revenue_Projection
+========================================
+2018   P1    100
+2017   P2    200
+2018   P2    300
+2019   P2    300
+ 
+Output Dataset:
+============================================================
+Product  Revenue_Projection_2017  Revenue_Projection_2018
+===========================
+P1     0         100
+P2     200        300
+
+
+
+data=([('2018','P1',100),('2017','P2',200),('2018','P2',300),('2019','P2',300)])
+schema = StructType([ \
+    StructField("year",StringType(),True), \
+    StructField("product",StringType(),True), \
+    StructField("revenue", IntegerType(), True) \
+  ])
+df=spark.createDataFrame(data,schema)
+
+df=df.groupBy('product').pivot('year').max("revenue").na.fill(0)
+result=df.select("product",F.col("2017").alias("rev_proj_2017"),F.col("2018").alias("rev_proj_2018"),F.col("2019").alias("rev_proj_2019")).orderBy("product").show()
+
+##################
+
+ id | name | activity |
++------+--------------+---------------+
+| 1 | Jonathan D. | Eating |
+| 2 | Jade W. | Singing |
+| 3 | Victor J. | Singing |
+| 4 | Elvis Q. | Eating |
+| 5 | Daniel A. | Eating |
+| 6 | Bob B. | Horse Riding |
+
+import pyspark.sql.types as T
+
+data=([(1,'jonathan','eating'),(2,'jade','singing'),(3,'victor','singing'),(4,'elvis','eating'),(5,'daniel','eating'),(6,'bob','horse ride')])
+schema = T.StructType([ \
+    T.StructField("id",T.IntegerType(),True), \
+    T.StructField("name",T.StringType(),True), \
+    T.StructField("activity", T.StringType(), True) \
+  ])
+  
+df=spark.createDataFrame(data,schema)
+
+#do groupBy on activity and take count
+df_activity_cnt=df.groupBy('activity').count()
+#join main frame with activity to get collective count for each activity
+df=df.join(df_activity_cnt,'activity','left').select('id','name','activity','count')
+#take min and max value
+your_min_value = df_activity_cnt.agg({"count": "min"}).collect()[0][0]
+your_max_value = df_activity_cnt.agg({"count": "max"}).collect()[0][0]
+result = df.filter(~df["count"].isin([your_min_value,your_max_value])).select('activity').distinct().show() // only activity column
+(or)
+result = df.filter(~df["count"].isin([your_min_value,your_max_value])).show() // with id,name,activity
+(or)
+result=df.join(result,'activity','left_anti').select('activity').show()
+
+############################
+
+Variables table:
++------+-------+
+| name | value |
++------+-------+
+| x | 66 |
+| y | 77 |
++------+-------+
+
+Expressions table:
++--------------+----------+---------------+
+| left_operand | operator | right_operand |
++--------------+----------+---------------+
+| x | > | y |
+| x | < | y |
+| x | = | y |
+| y | > | x |
+| y | < | x |
+| x | = | x |
+
+step1: create variable dataframe
+
+datav=([('x',66),('y',77)])
+schema=T.StructType([T.StructField('name',T.StringType(),True)\
+					,T.StructField('value',T.IntegerType(),True)])
+df_var=spark.createDataFrame(datav,schema)
+
+Step2: create expression dataframe
+
+datae=([('x','>','y'),('x','<','y'),('x','=','y'),('y','>','x'),('y','<','x'),('x','=','x')])
+df_expr=spark.createDataFrame(datae).toDF('left_operand','operator','right_operand')
+
+Step3: Create dictionary from variable dataframe and assign to expression dataframe
+
+df_dict = {row.asDict()['name'] : row.asDict()['value'] for row in df_var.collect()}
+df_dict = {k:str(v) for k,v in zip(df_dict.keys(),df_dict.values())}
+result=df_expr.na.replace(df_dict,1)
+
+Step 4: create condition based on operator and assign value to res column
+result=result.withColumn('res',F.when((F.col('operator')=='=') & (F.col('left_operand')==F.col('right_operand')),'true')
+								.when((F.col('operator')=='>') & (F.col('left_operand')>F.col('right_operand')),'true')
+								.when((F.col('operator')=='<') & (F.col('left_operand')<F.col('right_operand')),'true')
+								.otherwise('false')).show()
+								
+								
+
+##############################
+
+
+
+INPUT
+
+ID,PRODUCT
+1,["p1","p2","p3"]
+2,["p4","p3"]
+
+data=([(1,["p1","p2","p3"]),(2,["p4","p3"])])
+schema=T.StructType([T.StructField('id',T.IntegerType(),True)\
+					,T.StructField('product',T.ArrayType(T.StringType()),True)])
+					
+df=spark.createDataFrame(data,schema)
+import pyspark.sql.functions as F
+import pyspark.sql.types as T
+df=df.withColumn("array_split",F.explode('product'))
+
+>>> df=spark.createDataFrame(data,schema)
+>>> df.createOrReplaceTempView('prod')
+>>> spark.sql("""select id, explode(product) as prod_split from prod""").show()
+
+
+###############
+
+Input
+
+<_name_>abc
+<_code_>1
+<_value_>1234
+<_name_>abcdef
+<_code_>2
+<_value_>12345
+
+df=spark.read.format('csv').load('/data/sample6.csv')
+df_2 = df.withColumn('name_code_value', F.regexp_extract(F.col('_c0'), '<_([^<>]+)_>', 1)).withColumn('vals',F.split(F.col('_c0'),'_>')[1]).select('name_code_value','vals')
+df_dict = {row.asDict()['name_code_value'] : row.asDict()['vals'] for row in df_2.collect()}
+newrdd=df_2.rdd
+keypair_rdd = newrdd.map(lambda x : (x[0],x[1]))
+dict = keypair_rdd.collectAsMap()
+
+res=df_2.withColumn("json1", F.to_json(F.struct("name_code_value", "vals"))).select('json1')
+json_schema = spark.read.json(res.rdd.map(lambda row: row.json)).schema
+
+schema = T.StructType([T.StructField("name",T.StringType()),\
+                    T.StructField("code",T.StringType()),\
+					T.StructField("value",T.StringType())])
+
+
+res=res.withColumn('json', F.from_json(F.col('json'), schema)).show()
+res.select(F.get_json_object(res.json1,'$.name').alias('name')).show()
+
+def wrangle(row):
+   tmp = json.loads(row.json1)
+   return (tmp['name_code_value'], tmp['vals'])
+
+df.rdd.map(wrangle).toDF()
+
+|name_code_value|  vals|
++---------------+------+
+|           name|   abc|
+|           code|     1|
+|          value|  1234|
+|           name|abcdef|
+|           code|     2|
+|          value| 12345|
++---------------+------+
+
+
+
+{"name_code_value":"name","vals":"abc"}   |
+{"name_code_value":"code","vals":"1"}     |
+{"name_code_value":"value","vals":"1234"} |
+{"name_code_value":"name","vals":"abcdef"}|
+{"name_code_value":"code","vals":"2"}     |
+{"name_code_value":"value","vals":"12345"}
+
+
+df_2 = df.withColumn('name_code_value', F.regexp_extract(F.col('_c0'), '<_([^<>]+)_>', 1)).withColumn('vals',F.split(F.col('_c0'),'_>')[1])\
+.select('name_code_value','vals',F.lit(1).alias('id'))
+w = Window.partitionBy('name_code_value','id').orderBy('vals')
+df_2 = df_2.withColumn('order',F.rank().over(w))
+df_2 = df_2.withColumn('name_code_value',F.concat(F.col('name_code_value'),F.col('order'))).drop('order')
+
+
+n_type = 3
+l_col=['name'+str(i+1) for i in range(n_type)]+['code'+str(i+1) for i in range(n_type)]+['value'+str(i+1) for i in range(n_type)]
+
+df_2 = df_2.groupBy('id').pivot('name_code_value').agg({'vals':'max'}).orderBy('id').select(*l_col)
