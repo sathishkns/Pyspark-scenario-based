@@ -1,0 +1,289 @@
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+
+df=spark.read.format('csv').option('delimiter','|').option('header','true').load('/data/orders.csv')
+df_prod=spark.read.format('csv').option('delimiter','|').option('header','true').load('/data/products.csv')
+df=df.groupBy('customer_id','product_id').count()
+final=df.alias('a').join(df_prod.alias('p'),'product_id','inner').orderBy('customer_id','product_id').select('customer_id','product_id','product_name')
+
+
+#### read orc file from hdfs path #####
+
+hdfs dfs -cat /warehouse/tablespace/managed/hive/racp21.db/rt_cdc_event_inbox_hist_dp_rd/prcs_date=20271129//evt_type=com.fis.deposits.schedule_fund_transfer.1_1_0/delta_0000020_0000020_0000/000106_0
+
+hdfs://rasperf1/warehouse/tablespace/managed/hive//racp21.db/rt_cdc_event_inbox_hist_dp_rd/prcs_date=20271128/evt_type=com.fis.deposits.casa_account_open.1_1_0/*/
+
+df2=sqlContext.read.option("basePath","/warehouse/tablespace/managed/hive/racp21.db/rt_cdc_event_inbox_hist_dp_rd/prcs_date=20271129//evt_type=com.fis.deposits.schedule_fund_transfer.1_1_0/").orc('/warehouse/tablespace/managed/hive/racp21.db/rt_cdc_event_inbox_hist_dp_rd/prcs_date=20271129/evt_type=com.fis.deposits.schedule_fund_transfer.1_1_0')
+
+
+########
+
++-------------+---------------+
+| customer_id | customer_name |
++-------------+---------------+
+| 1      | Alice     |
+| 4      | Bob      |
+| 5      | Charlie    |
++-------------+---------------+
+
+data=([(1,'alice'),(4,'bob'),(100,'charlie')])
+from pyspark.sql import types as T
+schema=T.StructType([T.StructField('cust_id',T.IntegerType(),True)\
+					 ,T.StructField('cust_name',T.StringType(),True)])
+df=spark.createDataFrame(data,schema)
+maxi=df.agg({'cust_id':'max'}).collect()[0][0]
+df1=spark.range(1,maxi)
+df_missing_id=df1.join(df,[df.cust_id==df1.id],'left_anti').orderBy(F.asc('id')).show()
+
+
+#######
+
+data=([(1,'x',100),(2,'y',200),(3,'z',300),(4,'x',100),(5,'y',200),(6,'z',300)])
+import pyspark.sql.types as T
+schema=T.StructType([T.StructField('id',T.IntegerType(),True)\
+					 ,T.StructField('dept',T.StringType(),True)\
+					 ,T.StructField('dept_count',T.IntegerType(),True)])
+df=spark.createDataFrame(data,schema)
+df.show()
+df=df.withColumn("x_count",F.when((F.col("dept") == "x"), F.col("dept_count")).otherwise(F.lit(100)))\
+	 .withColumn("y_count",F.when((F.col("dept") == "y"), F.col("dept_count")).otherwise(F.lit(200)))\
+	 .withColumn("z_count",F.when((F.col("dept") == "z"), F.col("dept_count")).otherwise(F.lit(300)))
+	 
+df_cols=df.select('dept','dept_count')
+newrdd = df_cols.rdd
+keypair_rdd = newrdd.map(lambda x : (x[0],x[1]))
+df_dict= keypair_rdd.collectAsMap()
+{'x': 100, 'y': 200, 'z': 300}
+df=df.withColumn("x_count",F.when((F.col("dept") == "x"), F.col("dept_count")).otherwise(df_dict['x']))\
+	 .withColumn("y_count",F.when((F.col("dept") == "y"), F.col("dept_count")).otherwise(df_dict['y']))\
+	 .withColumn("z_count",F.when((F.col("dept") == "z"), F.col("dept_count")).otherwise(df_dict['z']))
+	 
+	 
+########
+
+t1=spark.sql("""desc racp21.rt_apd_ar_mstr_dp_rd""").rdd.map(lambda x:x[0]) // ['rec_date', ... '# col_name', 'full_date']
+t2=t1.filter(lambda x: x.startswith("# col_name")).collect() // ['# col_name']
+partition_col=spark.sql("""show partitions racp21.rt_apd_ar_mstr_dp_rd""").rdd.map(lambda x:x[0]).map(lambda x : [l.split('=')[0] for l in x.split('/')]).first()
+
+
+########
+
+data = [('2345', '<Date>1999/12/12 10:00:05</Date>'),
+('2398', '<Crew>crewIdXYZ</Crew>'),
+('2328', '<Latitude>0.8252644369443788</Latitude>'),        
+('3983', '<Longitude>-2.1915840465066916<Longitude>')]
+
+df = sc.parallelize(data).toDF(['ID', 'values'])
+df_2 = df.withColumn('vals', F.regexp_extract(F.col('value'), '(.)((?<=>)[^>]+(?=:?<))', 1))
+df.withColumn('vals', F.regexp_replace('value', '<[^>]*>', ''))
+
+(.)((?<=>)[^<:]+(?=:?<))
+(.)((?<=>)[^>]+(?=:?<))
+
+################
+
+data=([(12,'{"status":"200"}')])
+df=spark.createDataFrame(data).toDF('id','value')
+df.select('id',F.json_tuple(df.value,'status')).show()
+
+schema = T.StructType([T.StructField("status", T.StringType())])
+df=df.select('id',F.from_json(df.value, schema).alias("json")).show()
+
+#####################
+
+Alice,5,80
+Bob,5,80
+Alice,10,80
+
+df=sc.textFile('/data/sample.txt')
+df=df.map(lambda l: l.split(",")).toDF(['name','age','height']).select(F.col('name'))
+
+########
+
+data = [("id1", "A", "2000/09/10", "2021/11/10"),
+        ("id2", "A", "2001/09/28", "2020/10/02",),
+        ("id3", "B", "2017/09/30", None),
+        ("id4", "B", "2017/10/01", "2020/12/10",),
+        ("id5", "C", "2005/10/08", "2010/07/13",)]
+		
+df = spark.createDataFrame(data, ("ID", "area_id", "dob", "dod"))
+df=df.select('ID','area_id',F.to_date('dob','yyyy/MM/dd').alias('dob'),F.to_date('dod','yyyy/MM/dd').alias('dod'),F.month('dob').alias('mth'),F.year('dod').alias('yr'))
+
+extractor_map = {"quarter": F.quarter, "month": F.month, "year": F.year}
+conditions = {"month": 10, "year": 2019}
+conditional_expression=F.lit(True)
+
+for term, condition in conditions.items():
+    extractor = extractor_map[term]
+    conditional_expression = (conditional_expression) & (F.lit(condition).between(extractor("dob"), extractor("dod")))
+	
+###########
+
+
++---------+------------+
+| user_id | visit_date |
++---------+------------+
+| 1 | 2020-11-28 |
+| 1 | 2020-10-20 |
+| 1 | 2020-12-3 |
+| 2 | 2020-10-5 |
+| 2 | 2020-12-9 |
+| 3 | 2020-11-11 |
+
+
+data=([(1,'2020-11-28'),(1,'2020-10-20'),(1,'2020-12-03'),(2,'2020-10-05'),(2,'2020-12-09'),(3,'2020-11-11')])
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+schema=T.StructType([T.StructField("user_id", T.IntegerType(), True)\
+					,T.StructField("visit_date",T.StringType(),True)])
+df=spark.createDataFrame(data,schema)
+winSpec=W.partitionBy('user_id').orderBy('visit_date')
+todays_date='2021-01-01'
+df=df.withColumn('lead_val',F.lead('visit_date',1,todays_date).over(winSpec))
+date_diff=F.datediff(F.col('lead_val'),F.col('visit_date'))
+df=df.withColumn("diff",date_diff).groupBy('user_id').agg(F.max('diff').alias('maxi')).orderBy('user_id').show()
++-------+----+
+|user_id|maxi|
++-------+----+
+|      1|  39|
+|      2|  65|
+|      3|  51|
++-------+----+
+
+
+###########
+
++-------+-------+-------------------+-------------------+
+|acct_id|ip_addr|              login|             logout|
++-------+-------+-------------------+-------------------+
+|      1|      1|2021-02-01 09:00:00|2021-02-01 09:30:00|
+|      1|      2|2021-02-01 08:00:00|2021-02-01 11:30:00|
+
+
+|      2|      6|2021-02-01 20:30:00|2021-02-01 22:00:00|
+|      2|      7|2021-02-02 20:30:00|2021-02-02 22:00:00|
+
+|      4|     10|2021-02-01 16:00:00|2021-02-01 17:00:00|
+|      4|     11|2021-02-01 17:00:00|2021-02-01 17:59:59|
++-------+-------+-------------------+-------------------+
+
+
+data=([(1,1,'2021-02-01 09:00:00','2021-02-01 09:30:00'),(1,2,'2021-02-01 08:00:00','2021-02-01 11:30:00'),(1,3,'2021-02-01 10:00:00','2021-02-01 11:45:00'),(2,6,'2021-02-01 20:30:00','2021-02-01 22:00:00'),(2,7,'2021-02-02 20:30:00','2021-02-02 22:00:00'),(4,10,'2021-02-01 16:00:00','2021-02-01 17:00:00'),(4,11,'2021-02-01 17:00:00','2021-02-01 17:59:59')])
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+
+schema=T.StructType([T.StructField("acct_id", T.IntegerType(), True)\
+					,T.StructField("ip_addr",T.IntegerType(),True)\
+					,T.StructField("login_date",T.StringType(),True)\
+					,T.StructField("logout",T.StringType(),True)])
+df=spark.createDataFrame(data,schema)
+winSpec=W.partitionBy('acct_id').orderBy('login_date')
+df=df.withColumn("next_login_date",F.lead(F.to_date('login_date'),1,'9999-12-31').over(winSpec))
+df=df.filter(F.col('next_login_date')==F.to_date('login_date')).select('acct_id').distinct().show()
+
+
+##############
+
+Input:
+Players table:
++-----------+-------------+
+| player_id | player_name |
++-----------+-------------+
+| 1 | Nadal |
+| 2 | Federer |
+| 3 | Novak |
++-----------+-------------+
+Championships table:
++------+-----------+---------+---------+---------+
+| year | Wimbledon | Fr_open | US_open | Au_open |
++------+-----------+---------+---------+---------+
+| 2018 | 1 | 1 | 1 | 1 |
+| 2019 | 1 | 1 | 2 | 2 |
+| 2020 | 2 | 1 | 2 | 2 |
++------+-----------+---------+---------+---------+
+Output:
++-----------+-------------+-------------------+
+| player_id | player_name | grand_slams_count |
++-----------+-------------+-------------------+
+| 2 | Federer | 5 |
+| 1 | Nadal | 7 |
++-----------+-------------+-------------------+
+
+data_players=([(1,'nadal'),(2,'federer'),(3,'novak')])
+schema_players=T.StructType([T.StructField("player_id", T.IntegerType(), True)\
+					,T.StructField("player_name",T.StringType(),True)])
+df_player=spark.createDataFrame(data_players,schema_players)
+					
+data_champ=([('2018',1,1,1,1),('2019',1,1,2,2),('2020',2,1,2,2)])
+schema_champ=T.StructType([T.StructField("year", T.StringType(), True)\
+					,T.StructField("wim",T.IntegerType(),True)\
+					,T.StructField("frnch",T.IntegerType(),True)\
+					,T.StructField("us",T.IntegerType(),True)\
+					,T.StructField("au",T.IntegerType(),True)])
+df_champ=spark.createDataFrame(data_champ,schema_champ)
+
++----+---+-----+---+---+
+|year|wim|frnch| us| au|
++----+---+-----+---+---+
+|2018|  1|    1|  1|  1|
+|2019|  1|    1|  2|  2|
+|2020|  2|    1|  2|  2|
++----+---+-----+---+---+
+
+# get required columns for creating stacking experssion to unpivot
+required_cols=df_champ.columns[1:]
+n=len(required_cols)
+cols_to_stack = ", ".join(['\'{c}\', {c}'.format(c=c) for c in required_cols])
+stack_expression = "stack({}, {}) as (grand_slam_name,grand_slam_total)".format(n, cols_to_stack)
+print(stack_expression)
+"stack(4, 'wim', wim, 'frnch', frnch, 'us', us, 'au', au) as (grand_slam_name,grand_slam_total)"
+
+#unpivot the grand slam details
+unpivot_champ_df = df_champ.select("year", F.expr(stack_expression))
+
+#group the grand slam details and rename
+unpivot_champ_df=unpivot_champ_df.groupBy('grand_slam_total').count().select(F.col('grand_slam_total').alias('grand_slam_winner_id'),F.col('count').alias('grand_slam_count'))
+
+#join with player frame to get player id, name
+result=df_player.join(unpivot_champ_df,df_player.player_id==unpivot_champ_df.grand_slam_winner_id,'inner').select('player_id','player_name','grand_slam_count').show()
+
+
+
+######### PIVOT withhout using pivot function #########
+
+data=([(1,'india','mumbai'),(2,'india','chennai'),(3,'india','kolkatta'),(4,'AUS','sydney'),(5,'AUS','melbourne')])
+schema=T.StructType([T.StructField("id", T.IntegerType(), True)\
+					,T.StructField("country",T.StringType(),True)\
+					,T.StructField("city",T.StringType(),True)])
+					
+df=spark.createDataFrame(data,schema)
++---+-------+---------+
+| id|country|     city|
++---+-------+---------+
+|  1|  india|   mumbai|
+|  2|  india|  chennai|
+|  3|  india| kolkatta|
+|  4|    AUS|   sydney|
+|  5|    AUS|melbourne|
++---+-------+---------+
+
+winSpec=W.partitionBy('country').orderBy('country')
+df=df.withColumn('rno',F.row_number().over(winSpec))
+df=df.withColumn('city1',F.when(F.col('rno')==1,F.col('city')))\
+     .withColumn('city2',F.when(F.col('rno')==2,F.col('city')))\
+	 .withColumn('city3',F.when(F.col('rno')==3,F.col('city')))
+df=df.groupBy('country').agg(F.max('city1').alias('city1'),F.max('city2').alias('city2'),F.max('city3').alias('city3'))
+
++-------+------+---------+--------+
+|country| city1|    city2|   city3|
++-------+------+---------+--------+
+|  india|mumbai|  chennai|kolkatta|
+|    AUS|sydney|melbourne|    null|
++-------+------+---------+--------+
+
+
+####### with PIVOT #####
+pivotDF = df.groupBy("country").pivot("rno").agg(F.max("city"))
+pivotDF.select('country',F.col('1').alias('city1'),F.col('2').alias('city2'),F.col('3').alias('city3')).show()
