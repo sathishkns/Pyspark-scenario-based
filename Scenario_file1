@@ -1,0 +1,264 @@
+# Scenario 1: if date is >28th of current month display date else put default 28th date for that month
+
+df=spark.read.format('csv').option('header','true').option('delimiter','|').load('/data/sample3.csv')
+df=df.withColumn("temp_day",F.dayofmonth("date"))
+df_datelessthan28=df.filter(df['temp_day'] < 28).select('id','name','amnt','addrs','date','temp_day')
+df_greaterthan28=df.filter(df['temp_day'] >= 28).select('id','name','amnt','addrs','date','temp_day')
+date_diff=F.expr("date_add(date, 28-temp_day)")
+df_greaterthan28=df_greaterthan28.withColumn("date", date_diff)
+final=df_datelessthan28.union(df_greaterthan28).drop('temp_day').show()
+
++---+----+----+-----+----------+
+| id|name|amnt|addrs|      date|
++---+----+----+-----+----------+
+|  1|John| 100|   CA|2022-01-02|
+|  2|Clar| 200|   NY|2022-01-12|
+|  3|Olan| 300|   CJ|2022-02-28|
+|  4|Fred| 400|   WT|2022-03-28|
+|  5|Ben | 500|   NY|2022-04-28|
++---+----+----+-----+----------+
+
+date_add_udf = F.udf(lambda date, days: F.date_add(date, days), pyspark.sql.types.TimestampType())
+df.withColumn("timestamp", date_add_udf(F.col("timestamp"), -F.col("days")))
+
+
+df=spark.read.format('csv').option('header','true').option('delimiter',',').load('company.csv')
+winSpec=Window.partitionBy('cmp_id').orderBy(F.col("date").desc())
+df_filter=df.withColumn("rnk",F.rank().over(winSpec)).filter(F.col('rnk') <= 2).orderBy(F.col('cmp_id'))
+df_filter=df_filter.withColumn("curr_director",F.when(F.col('rnk')==1,F.col('name'))).withColumn("prev_director",F.when(F.col('rnk')==2,F.col('name')))
+final1=df_filter.where(F.col('curr_director').isNotNull())
+final2=df_filter.where(F.col('prev_director').isNotNull())
+result=final1.alias('a').join(final2.alias('b'),"cmp_id","left").select('a.cmp_id','a.curr_director','b.prev_director').show()
+
++------+-------+----------+---+
+|cmp_id|   name|      date|rnk|
++------+-------+----------+---+
+|     1|   rose|2000-05-19|  1|
+|     1|michael|1991-05-19|  2|
+|     2|  maria|1979-12-01|  1|
+|     2| robert|1978-09-05|  2|
+|     3|    jen|1990-02-17|  1|
++------+-------+----------+---+
+
+
+step2:
+
+df_filter=df_filter.withColumn("curr_dir",F.col('rnk')==1)
+
+res=df_filter.withColumn("new_val", F.when(F.col("rnk") == 1,"curr_dir").when(F.col("rnk") == 2,"prev_dir").otherwise("Unknown"))
+
+step 3:
+where((F.col('curr_director').isNotNull()) | (F.col('prev_director').isNotNull()))
+where((length(col('curr_director')) > 0 ) | (length(col('prev_director')) > 0 ))
+where(F.col('curr_director').isNotNull() | (F.col('prev_director').isNotNull()))
+
+#####################
+
++------------+
+| log_id |
++------------+
+| 1 |	1	0
+| 2 |	2	0
+| 3 |	3	0
+| 7 |	4	3
+| 8 |	5	3
+| 10 |	6	4
++------------+
+Output:
++------------+--------------+
+| start_id | end_id |
++------------+--------------+
+| 1 | 3 |
+| 7 | 8 |
+| 10 | 10 |
++------------+--------------+
+
+df=spark.createDataFrame([1,2,3,7,8,10],T.IntegerType())
+df=df.withColumn("rn",F.row_number().over(W.orderBy('value')))
+condition=F.col('value')-F.col('rn')
+df=df.withColumn("diff",condition)
+result=df.groupBy('diff').agg(F.min('value').alias('startid'), F.max('value').alias('endid')).select('startid','endid').show()
+
+##############
+
+event_time status
+10:01	ON
+10:02 	ON
+10:03	ON
+10:04	OFF
+10:07	ON
+10:08	ON
+10:09	OFF
+
+df=spark.createDataFrame([('10:01','on'),('10:02','on'),('10:03','on'),('10:04','off'),('10:07','on'),('10:08','on'),('10:09','off'),('10:11','on'),('10:12','off')]).toDF('evt_time','status')
+df=df.withColumn('lag',F.coalesce(F.lag('status',1).over(W.orderBy('evt_time')),F.col('status')))
+df=df.withColumn('running_sum',F.when( (F.col('status')=='on') & (F.col('lag')=='off'),1).otherwise(0))\
+     .withColumn('cumu', F.sum('running_sum').over(W.orderBy('evt_time')))
+final=df.groupBy('cumu').agg(F.min('evt_time').alias('login_time'),F.max('evt_time').alias('logout_time'),F.count('cumu')-1)
+
+
+####################
+
+data=([('1','john','abc'),('2','bro','abc'),('3','rio','abc')])
+w=orderBy('id')
+w1 = W.partitionBy("Dept").orderBy("Dept")
+new_df=df.withColumn("check_dups",F.col('dept')==F.lag('dept').over(w))
+new_df=new_df.withColumn("rnk",F.row_number().over(w))
+new_df=new_df.withColumn('chk_lth',F.count('dept').over(w1))
+condition=F.col("check_dups")| ((F.col("chk_lth")>1) & (F.col("rnk")==1))
+result=new_df.withColumn("dept_updated",F.when(condition, F.concat_ws("_",*['dept','name'])).otherwise(F.col('dept'))).show()
+
+
++---+----+----+----------+---+-------+------------+
+| id|name|dept|check_dups|rnk|chk_lth|dept_updated|
++---+----+----+----------+---+-------+------------+
+|  1|john| abc|      null|  1|      3|    abc_john|
+|  2| bro| abc|      true|  2|      3|     abc_bro|
+|  3| rio| abc|      true|  3|      3|     abc_rio|
++---+----+----+----------+---+-------+------------+
+
+
+#############################
+
+Accounts table:
++----+----------+
+| id | name |
++----+----------+
+| 1 | Winston |
+| 7 | Jonathan |
++----+----------+
+Logins table:
++----+------------+
+| id | login_date |
++----+------------+
+| 7 | 2020-05-30 |
+| 1 | 2020-05-30 |
+| 7 | 2020-05-31 |
+| 7 | 2020-06-01 |
+| 7 | 2020-06-02 |
+| 7 | 2020-06-02 |
+| 7 | 2020-06-03 |
+| 1 | 2020-06-07 |
+| 7 | 2020-06-10 |
++----+------------+
+
+data_login=([('7','2020-05-30'),('1','2020-05-30'),('7','2020-05-31'),('7','2020-06-01'),('7','2020-06-02'),('7','2020-06-02'),('7','2020-06-03'),('7','2020-06-07'),('7','2020-06-10')])
+df=spark.createDataFrame(data_login).toDF('id','login_date')
+
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+winSpec=W.partitionBy('id').orderBy(F.asc('login_date'))
+df=df.withColumn('lead_date',F.lag('login_date',1).over(winSpec)).withColumn('date_diff',F.datediff('login_date','lead_date'))
+res = df.groupBy('id').agg(F.sum(F.when(F.col('date_diff')==1,1).otherwise(0)).alias('diff_1'))
+
+
+winSpec=W.partitionBy('id').orderBy(F.asc('login_date'))
+df=df.withColumn('drnk',F.dense_rank().over(winSpec))
+date_add_expr=F.expr("date_add(login_date, -drnk)")
+df=df.withColumn('temp_date',date_add)
+res = df.groupBy('id','temp_date').count().filter('count>=5').select('id').show()
+
+
+###########
+
+
+df=spark.createDataFrame(["hadoop is fast","hive is sql on hdfs","spark is superfast","spark is awesome"],T.StringType())
+df=(['{"parenttag":[{"seq":1,"id":2,"value":"Chennai"},{"seq":2,"id":5,"value":"Shanmu"}]}'],T.StringType())
+simple_json = '{"parenttag":[{"seq":1,"id":2,"value":"Chennai"},{"seq":2,"id":5,"value":"Shanmu"}]}'
+rddjson = sc.parallelize([simple_json])
+df=rddjson.map(lambda x: (x, )).toDF().show()
+
+
+
+######
+
+Customers table:
++-------------+-----------+
+| customer_id | name   |
++-------------+-----------+
+| 1      | Winston  |
+| 2      | Jonathan |
+| 3      | Annabelle |
+| 4      | Marwan  |
+| 5      | Khaled  |
++-------------+-----------+
+Orders table:
++----------+------------+-------------+------+
+| order_id | order_date | customer_id | cost |
++----------+------------+-------------+------+
+| 1    | 2020-07-31 | 1      | 30  |
+| 2    | 2020-07-30 | 2      | 40  |
+| 3    | 2020-07-31 | 3      | 70  |
+| 4    | 2020-07-29 | 4      | 100 |
+| 5    | 2020-06-10 | 1      | 1010 |
+| 6    | 2020-08-01 | 2      | 102 |
+| 7    | 2020-08-01 | 3      | 111 |
+| 8    | 2020-08-03 | 1      | 99  |
+| 9    | 2020-08-07 | 2      | 32  |
+| 10    | 2020-07-15 | 1      | 2  |
+
+
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+cust_data=([(1,'winston'),(2,'jonathan'),(3,'annabelle'),(4,'marwan'),(5,'khaled')])
+cust_schema=T.StructType([T.StructField('cust_id',T.IntegerType(),True)\
+						  ,T.StructField('cust_name',T.StringType(),True)])
+						  
+df_cust=spark.createDataFrame(cust_data,cust_schema)
+						  
+orders_data=([(1,'2020-07-31',1,30),(2,'2020-07-30',2,40),(3,'2020-07-31',3,70),(4,'2020-07-29',4,1000),(5,'2020-06-10',1,1010),(6,'2020-08-01',2,102),(7,'2020-08-01',3,111),(8,'2020-08-03',1,99),(9,'2020-08-07',2,32),(10,'2020-07-15',1,2)])
+
+order_schema=T.StructType([T.StructField('order_id',T.IntegerType(),True)\
+						  ,T.StructField('order_date',T.StringType(),True)\
+						  ,T.StructField('cust_id',T.IntegerType(),True)\
+						  ,T.StructField('cost',T.IntegerType(),True)])
+						  
+df_orders=spark.createDataFrame(orders_data,order_schema)
+
+win_spec=W.partitionBy('cust_id').orderBy(F.desc('order_date'))
+df_orders=df_orders.withColumn('rnk',F.rank().over(win_spec)).filter(F.col('rnk')<=3).drop('rnk').select('order_id','order_date','cust_id','cost')
+result=df_orders.alias('o').join(df_cust.alias('c'),'cust_id','inner').orderBy(F.asc('c.cust_name'),F.desc('o.order_date')).select('cust_name','cust_id','order_id','order_date').show()
+
+
+
+######## overlap timinings #####
+
+
+
+data=([('2018-01-01 00:00:00','2018-01-04 00:00:00','10'),('2018-01-02 00:00:00','2018-01-03 00:00:00','10'),('2018-01-03 00:00:00','2018-01-05 00:00:00','20'),('2018-01-06 00:00:00','2018-01-07 00:00:00','30'),('2018-01-07 00:00:00','2018-01-08 00:00:00','30')]).toDF('start_time','end_time','rate')
+
+df=spark.createDataFrame(data).toDF('start_time','end_time','rate')
+winSpec=W.orderBy('start_time').rowsBetween(1, W.unboundedFollowing)
+df=df.withColumn('end_time2',F.min(F.col('start_time')).over(winSpec))
+res=df.select('start_time',F.when(F.col('end_time2')<F.col('end_time'),F.col('end_time2')).otherwise(F.col('end_time')).alias('end_time'),'rate')
+
+
+##### overlap dates #####
+
+data=([('U1','2020-01-01','2020-01-31'),('U2','2020-01-16','2020-01-26'),('U3','2020-01-28','2020-02-06'),('U4','2020-02-16','2020-02-26')])
+df=spark.createDataFrame(data).toDF('uid','start_date','end_date')
+
+|uid|start_date|  end_date|
++---+----------+----------+
+| U1|2020-01-01|2020-01-31|
+| U2|2020-01-16|2020-01-26|
+| U3|2020-01-28|2020-02-06|
+| U4|2020-02-16|2020-02-26|
++---+----------+----------+
+df_join=df.alias('a').join(df.alias('b'),'uid','inner').select('a.uid','b.uid','a.start_date','b.end_date','a.end_date','b.start_date').show()
+
+res="SELECT S1.uid,MAX(CASE WHEN S1.START_DATE <= S2.END_DATE AND S1.END_DATE >= S2.START_DATE THEN 'TRUE' ELSE 'FALSE' END) OVERLAP FROM df1 S1, df1 S2 WHERE S1.uid <> S2.uid GROUP BY S1.uid ORDER BY S1.uid"
+
+
+df = spark.createDataFrame(
+    [(38, "medicine", 4), (41, "medicine", 5), (55, "medicine", 7)],
+    ("Age", "Dept", "ID")
+)
+w = W.partitionBy('Dept').orderBy('Age')
+df.select(
+    "*",
+    F.first('ID').over(w).alias("first_id"), 
+    F.last('ID').over(w).alias("last_id")
+)
+w=W.partitionBy('Dept').orderBy('Age').rowsBetween(W.unboundedPreceding, W.unboundedFollowing)
