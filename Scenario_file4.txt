@@ -1,0 +1,297 @@
+Contests table:
++------------+------------+--------------+--------------+
+| contest_id | gold_medal | silver_medal | bronze_medal |
++------------+------------+--------------+--------------+
+| 190 | 1 | 5 | 2 |
+| 191 | 2 | 3 | 5 |
+| 192 | 5 | 2 | 3 |
+| 193 | 1 | 3 | 5 |
+| 194 | 4 | 5 | 2 |
+| 195 | 4 | 2 | 1 |
+| 196 | 1 | 5 | 2 |
+
+data_contest=([(190,1,5,2),(191,2,3,5),(192,5,2,3),(193,1,3,5),(194,4,5,2),(195,4,2,1),(196,1,5,2)])
+schema_contest=T.StructType([T.StructField("contest_id", T.IntegerType(), True)\
+					,T.StructField("gold",T.IntegerType(),True)\
+					,T.StructField("silver",T.IntegerType(),True)\
+					,T.StructField("bronze",T.IntegerType(),True)])
+
+df_contest=spark.createDataFrame(data_contest,schema_contest)
+
+Users table:
++---------+--------------------+-------+
+| user_id | mail | name |
++---------+--------------------+-------+
+| 1 | sarah@leetcode.com | Sarah |
+| 2 | bob@leetcode.com | Bob |
+| 3 | alice@leetcode.com | Alice |
+| 4 | hercy@leetcode.com | Hercy |
+| 5 | quarz@leetcode.com | Quarz |
+
+data_users=([(1,'sarah@leetcode.com','sarah'),(2,'bob@leetcode.com','bob'),(3,'alice@leetcode.com','alice'),(4,'hercy@leetcode.com','hercy'),(5,'quarz@leetcode.com','quarz')])
+schema_users=T.StructType([T.StructField("user_id", T.IntegerType(), True)\
+					,T.StructField("mail",T.StringType(),True)\
+					,T.StructField("name",T.StringType(),True)])
+
+df_users=spark.createDataFrame(data_users,schema_users)
+
+
+Output:
++-------+--------------------+
+| name | mail |
++-------+-------------------+
+| Sarah | sarah@leetcode.com |
+| Bob | bob@leetcode.com |
+| Alice | alice@leetcode.com |
+| Quarz | quarz@leetcode.com |
+
+atlease one:
+
+The user won any medal in three or more consecutive contests.
+The user won the gold medal in three or more different contests (not necessarily consecutive).
+
+
+# get required columns for creating stacking experssion to unpivot
+required_cols=df_contest.columns[1:]
+n=len(required_cols)
+cols_to_stack = ", ".join(['\'{c}\', {c}'.format(c=c) for c in required_cols])
+stack_expression = "stack({}, {}) as (medal,userid)".format(n, cols_to_stack)
+unpivot_contest_df = df_contest.select("contest_id", F.expr(stack_expression))
+
+#filter gold medal
+df_gold_medal=unpivot_contest_df.groupBy('medal','userid').count().filter( (F.col('medal')=='gold') & (F.col('count')>=3))
+
+#filter consecutive contest id medal details
+unpivot_contest_df=unpivot_contest_df.orderBy('contest_id','userid')
+unpivot_contest_df=unpivot_contest_df.join(df_users,unpivot_contest_df.userid==df_users.user_id,'inner').select('contest_id','userid')
+winSpec1=W.partitionBy('userid').orderBy('userid')
+df_consecutive_id=unpivot_contest_df.withColumn('flag',F.when(F.col('contest_id')>F.lag('contest_id').over(winSpec1),1).otherwise(0))
+df_consecutive_id=df_consecutive_id.groupBy('userid').count().filter(F.col('count')>=3)
+
+#join both dataframes
+final=df_gold_medal.join(df_consecutive_id,'userid','right').select('userid')
+
+
+################
+
+order_id | product_id | quantity |
++----------+------------+----------+
+ 1 | 1 | 12 |
+| 1 | 2 | 10 |
+| 1 | 3 | 15 |
+| 2 | 1 | 8 |
+| 2 | 4 | 4 |
+| 2 | 5 | 6 |
+| 2 | 9 | 4 |
+| 3 | 3 | 5 |
+| 3 | 4 | 18 |
+| 4 | 5 | 2 |
+| 4 | 6 | 8 |
+| 5 | 7 | 9 |
+| 5 | 8 | 9 |
+| 3 | 9 | 20 |
+
+
+data_orders=([(1,1,12),(1,2,10),(1,3,15),(2,1,8),(2,4,4),(2,5,6),(3,3,5),(3,4,18),(4,5,2),(4,6,8),(5,7,9),(5,8,9),(3,9,20),(2,9,4)])
+schema_orders=schema_users=T.StructType([T.StructField("order_id", T.IntegerType(), True)\
+					,T.StructField("prod_id",T.IntegerType(),True)\
+					,T.StructField("quantity",T.IntegerType(),True)])
+					
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+
+df=spark.createDataFrame(data_orders,schema_orders)
+df=df.groupBy('order_id').agg(F.max(F.col('quantity')).alias('maxi_qty'),F.avg(F.col('quantity')).alias('avg_qty'))
+maxi_avg = df.agg(F.max(F.col('avg_qty'))).collect()[0][0]
+df=df.withColumn("flag",F.when(F.col('maxi_qty')>maxi_avg,1).otherwise(0)).filter(F.col('flag')==1).select('order_id').show()
+
++--------+
+|order_id|
++--------+
+|       1|
+|       3|
++--------+
+
+
+
+#############
+
+
+Confirmations table:
++---------+---------------------+-----------+
+| user_id | time_stamp | action |
++---------+---------------------+-----------+
+| 3 | 2021-01-06 03:30:46 | timeout |2|0
+| 3 | 2021-07-14 14:00:00 | timeout |
+
+| 7 | 2021-06-12 11:57:29 | confirmed |3|3
+| 7 | 2021-06-13 12:58:28 | confirmed |
+| 7 | 2021-06-14 13:59:27 | confirmed |
+
+| 2 | 2021-01-22 00:00:00 | confirmed |2|1
+| 2 | 2021-02-28 23:59:59 | timeout |
+
+
+data_confirm=([(3,'2021-01-06 03:30:46','timeout'),(3,'2021-07-14 14:00:00','timeout'),(7,'2021-06-12 11:57:29','confirmed'),(7,'2021-06-13 12:58:28','confirmed'),(7,'2021-06-14 13:59:27','confirmed'),(2,'2021-01-22 00:00:00','confirmed'),(2,'2021-02-28 23:59:59','timeout')])
+schema_confirm=schema_users=T.StructType([T.StructField("user_id", T.IntegerType(), True)\
+					,T.StructField("ts",T.StringType(),True)\
+					,T.StructField("action",T.StringType(),True)])
+					
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+
+df=spark.createDataFrame(data_confirm,schema_confirm)
+df_userid_cnt=df.withColumn('user_id_cnt',F.count('user_id').over(W.partitionBy('user_id'))).groupBy('user_id','user_id_cnt').count().select('user_id','user_id_cnt')
+df_action_cnt=df.withColumn('action_cnt',F.when(F.col('action')=='confirmed',1).otherwise(0)).filter(F.col('action_cnt')==1).groupBy('user_id').count().select('user_id',F.col('count').alias('action_cnt'))
+final=df_userid_cnt.alias('a').join(df_action_cnt.alias('b'),'user_id','left').na.fill(0)
+prob=(F.col('action_cnt')/F.col('user_id_cnt'))
+final=final.withColumn("probability",F.round(prob,2).cast(T.DecimalType(3,2))).select('user_id','probability')
+
+
+##### friendship ####
+
+| user1_id | user2_id |
++----------+----------+
+| 1 | 2 |
+| 1 | 3 |
+| 2 | 3 |
+| 1 | 4 |
+| 2 | 4 |
+| 1 | 5 |
+| 2 | 5 |
+| 1 | 7 |
+| 3 | 7 |
+| 1 | 6 |
+| 3 | 6 |
+| 2 | 6 |
++----------+----------+
+Output:
++----------+----------+---------------+
+| user1_id | user2_id | common_friend |
++----------+----------+---------------+
+| 1 | 2 | 4 |
+| 1 | 3 | 3 |
++----------+----------+---------------+
+Explanation:
+Users 1 and 2 have 4 common friends (3, 4, 5, and 6).
+Users 1 and 3 have 3 common friends (2, 6, and 7).
+We did not include the friendship of users 2 and 3 because they only have two common friends (1 and 6).
+
+1 -> [2,3,4,5,6,7]
+2 -> [1,3,4,5,6]
+3 -> [1,2,6,7]
+4 -> [1,2]
+
+1  3
+1  4
+1  8
+3  1
+
+spark.sql("SELECT t0.c1,t0.c2 FROM table1 t0 INNER JOIN table1 t1 ON t0.c1 = t1.c2 AND t0.c2 = t1.c1")
+
+
+data_user_id=([(1,2),(1,3),(2,3),(1,4),(2,4),(1,5),(2,5),(1,7),(3,7),(1,6),(3,6),(2,6)])
+schema_userid=T.StructType([T.StructField("c1", T.IntegerType(), True)\
+					,T.StructField("c2",T.IntegerType(),True)])
+					
+df=spark.createDataFrame(data_user_id,schema_userid)
+df.createOrReplaceTempView('table1')
+window_spec = W.partitionBy("user_id_1").orderBy('user_id_1')
+window_spec1 = W.partitionBy("user_id_2").orderBy('user_id_2')
+df_userid2_list=df.withColumn("uid2", F.collect_list("user_id_2").over(window_spec))\
+				  .withColumn("rn", F.row_number().over(window_spec)).where("rn == 1")
+df_userid1_list=df.withColumn("uid1", F.collect_list("user_id_1").over(window_spec1))\
+				  .withColumn("rn", F.row_number().over(window_spec1)).where("rn == 1")
+res=df_userid1_list.join(df_userid2_list,['user_id_2','user_id_1'],'right')
+
+
+
+df = df.select("user_id_2").rdd.flatMap(lambda x: x).collect()
+df=list(df.select('user_id_2').toPandas()['user_id_2'])
+
+%sql
+WITH joined_table AS(
+ SELECT user1,user2 FROM (
+  SELECT user_id1 AS user1,user_id2 AS user2 FROM friendship
+  UNION 
+  SELECT user_id2 AS user1,user_id1 AS user2 FROM friendship
+  ) 
+ )
+  
+SELECT user_id1,user_id2, COUNT(3) as friends FROM friendship f
+ INNER JOIN joined_table j1 ON f.user_id1=j1.user1
+ INNER JOIN joined_table j2 ON f.user_id2=j2.user2 AND j1.user2=j2.user1
+GROUP BY user_id1,user_id2
+HAVING COUNT(3)>2
+
+
+with cte as (
+(select user1_id,user2_id from friendship)
+union all
+(select user2_id,user1_id from friendship)
+)  
+select f1.user1_id,f1.user2_id,count(*) common_friend from friendship f1 
+join cte c1 on f1.user1_id=c1.user2_id
+join cte c2 on f1.user2_id=c2.user2_id
+where c1.user1_id=c2.user1_id 
+group by f1.user1_id,f1.user2_id
+having count(*)>=3
+
+
+
+
+
+######
+
+
+data_pop=([('chennai','india',100),('bangalore','india',200),('sydney','aus',300),('perth','aus',500)])
+schema_data_pop=T.StructType([T.StructField("city", T.StringType(), True)\
+					,T.StructField("country",T.StringType(),True)\
+					,T.StructField("city_population",T.IntegerType(),True)])
+df=spark.createDataFrame(data_pop,schema_data_pop)
+df=df.groupBy('country').agg(F.sum('city_population').alias('city_population')).orderBy(F.desc('city_population'))
+
+
+####
+
+Subscriptions table:
++------------+------------+------------+
+| account_id | start_date | end_date |
++------------+------------+------------+
+| 9 | 2020-02-18 | 2021-10-30 |
+| 3 | 2021-09-21 | 2021-11-13 |
+| 11 | 2020-02-28 | 2020-08-18 |
+| 13 | 2021-04-20 | 2021-09-22 |
+| 4 | 2020-10-26 | 2021-05-08 |
+| 5 | 2020-09-11 | 2021-01-17 |
++------------+------------+------------+
+Streams table:
++------------+------------+-------------+
+| session_id | account_id | stream_date |
++------------+------------+-------------+
+| 14 | 9 | 2020-05-16 |
+| 16 | 3 | 2021-10-27 |
+| 18 | 11 | 2020-04-29 |
+| 17 | 13 | 2021-08-08 |
+| 19 | 4 | 2020-12-31 |
+| 13 | 5 | 2021-01-05 |
+
+data_sub=([(9,'2020-02-18','2021-10-30'),(3,'2021-09-21','2021-11-13'),(11,'2020-02-28','2020-08-18'),(13,'2021-04-20','2021-09-22'),(4,'2020-10-26','2021-05-08'),(5,'2020-09-11','2021-01-17')])
+schema_data_sub=T.StructType([T.StructField("acct_id", T.IntegerType(), True)\
+					,T.StructField("start_date",T.StringType(),True)\
+					,T.StructField("end_date",T.StringType(),True)])
+df_sub=spark.createDataFrame(data_sub,schema_data_sub)
+					
+data_streams=([(14,9,'2020-05-16'),(16,3,'2021-10-27'),(18,11,'2020-04-29'),(17,13,'2021-08-08'),(19,4,'2020-12-31'),(13,5,'2021-01-05')])
+schema_data_streams=T.StructType([T.StructField("sess_id", T.IntegerType(), True)\
+					,T.StructField("acct_id",T.IntegerType(),True)\
+					,T.StructField("stream_date",T.StringType(),True)])
+df_stream=spark.createDataFrame(data_streams,schema_data_streams)
+
+df_sub_2021=df_sub.withColumn('year_sub',F.year('end_date')).filter(F.col('year_sub')=='2021')
+df_not_stream_2021=df_stream.withColumn('not_stream_year',F.year('stream_date')).filter(F.col('not_stream_year')!='2021')
+res=df_sub_2021.join(df_stream_less_than_2021,'acct_id','inner').agg(F.count("acct_id").alias('acct_cnt')).show()
+
+
