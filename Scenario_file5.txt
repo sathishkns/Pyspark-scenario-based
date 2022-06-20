@@ -1,0 +1,176 @@
+Members table:
+| member_id | name  |
+
+| 9     | Alice  |
+
+| 11    | Bob   |
+
+| 3     | Winston |
+
+| 8     | Hercy  |
+
+| 1     | Narihan |
+
+member_data=([(9,'Alice'),(11,'Bob'),(3,'Winston'),(8,'Hercy'),(1,'Narihan')])
+members_schema=T.StructType([T.StructField("member_id", T.IntegerType(), True)\
+					,T.StructField("name",T.StringType(),True)])
+df_members=spark.createDataFrame(member_data,members_schema)
+
+Visits table:
+| visit_id | member_id | visit_date |
+
+| 22    | 11    | 2021-10-28 |11|3|1|(100*1)/3=33.3
+
+| 16    | 11    | 2021-01-12 |9|2|1|(100*1)/2=50
+
+| 18    | 9     | 2021-12-10 |3|1|0|0
+
+| 19    | 3     | 2021-10-19 |8|1|1|(100*1)/1=100
+
+| 12    | 11    | 2021-03-01 |
+
+| 17    | 8     | 2021-05-07 |
+
+| 21    | 9     | 2021-05-12 |
+
+data_visit=([(22,11,'2021-10-28'),(16,11,'2021-01-12'),(18,9,'2021-12-10'),(19,3,'2021-10-19'),(12,11,'2021-03-01'),(17,8,'2021-05-07'),(21,9,'2021-05-12')])
+visit_schema=T.StructType([T.StructField("visit_id", T.IntegerType(), True)\
+					,T.StructField("member_id",T.IntegerType(),True)\
+					,T.StructField("visit_date",T.StringType(),True)])
+					
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from pyspark.sql import Window as W
+
+df_visit=spark.createDataFrame(data_visit,visit_schema)
+
+
+Purchases table:
+| visit_id | charged_amount |
+
+
+| 12    | 2000      |
+
+| 18    | 9000      |
+
+| 17    | 7000      |
+
+data_purchase=([(12,2000),(18,9000),(17,7000)])
+purchase_schema=T.StructType([T.StructField("visit_id", T.IntegerType(), True)\
+					,T.StructField("charged_amount",T.IntegerType(),True)])
+df_purchase=spark.createDataFrame(data_purchase,purchase_schema)
+
+#get member count who visited on different dates
+df_member_count=df_visit.groupBy('member_id').count().select('member_id',F.col('count').alias('member_count'))
+
+# define window for each visit and get count of member who did purchase
+w = W.partitionBy('visit_id').orderBy('visit_id')
+df_purchase_count=df_visit.join(df_purchase,'visit_id','inner').select('member_id','visit_id').withColumn('purchase_count',F.count('member_id').over(w))
+
+#calculate conversion rate using member count and purchase count and populate in new column
+conversion_rate=F.round((100 * F.col('purchase_count'))/F.col('member_count'),2)
+merged_df=df_member_count.join(df_purchase_count,'member_id','left').withColumn('conversion_rate',conversion_rate).na.fill(0)
+
+#derive case category
+case_category=F.when((F.col('conversion_rate') >= 80), F.lit('Diamond')).when((F.col('conversion_rate') >= 50) & (F.col('conversion_rate') < 80), F.lit('Gold')).when((F.col('conversion_rate') < 50), F.lit('Silver')).otherwise(F.lit('Bronze'))
+
+#finally join with members df
+result=df_members.join(merged_df,'member_id','left').withColumn('Category',case_category).orderBy('member_id').select('member_id','name','Category').show()
+
+
+######
+
+Transactions table:
++------------+------------+----------+--------+
+| account_id | day | type | amount |
++------------+------------+----------+--------+
+| 1 | 2021-11-07 | Deposit | 2000 |
+| 1 | 2021-11-09 | Withdraw | 1000 |
+| 1 | 2021-11-11 | Deposit | 3000 |
+| 2 | 2021-12-07 | Deposit | 7000 |
+| 2 | 2021-12-12 | Withdraw | 7000 |
++------------+------------+----------+--------+
+
+data_txn=([(1,'2021-11-07','Deposit',2000),(1,'2021-11-09','Withdraw',1000),(1,'2021-11-11','Deposit',3000),(2,'2021-12-07','Deposit',7000),(2,'2021-12-12','Withdraw',7000)])
+import pyspark.sql.functions as F
+import pyspark.sql.types as T
+from pyspark.sql import Window as W
+txn_schema=T.StructType([T.StructField("account_id", T.IntegerType(), True)\
+					,T.StructField("txn_date",T.StringType(),True)\
+					,T.StructField("type",T.StringType(),True)\
+					,T.StructField("txn_amount",T.IntegerType(),True)])
+df=spark.createDataFrame(data_txn,txn_schema)
+
+win_spec=W.partitionBy('account_id').orderBy('txn_date').rowsBetween(W.unboundedPreceding,0)
+case_spec=F.when(F.col('type')=='Deposit', F.col('txn_amount')).otherwise(-F.col('txn_amount'))
+df=df.withColumn('Balance',case_spec).withColumn('Balance',F.sum('Balance').over(win_spec)).select('account_id','txn_date','Balance')
+
+
+#####
+
+
+ order_id | customer_id | order_type |
++----------+-------------+------------+
+| 1 | 1 | 0 |
+| 2 | 1 | 0 |
+
+| 11 | 2 | 0 |
+| 12 | 2 | 1 |
+
+| 21 | 3 | 1 |
+| 22 | 3 | 0 |
+
+| 31 | 4 | 1 |
+| 32 | 4 | 1 |
+
+data_order=([(1,1,0),(2,1,0),(11,2,0),(12,2,1),(21,3,1),(22,3,0),(31,4,1),(32,4,1)])
+order_schema=T.StructType([T.StructField("order_id", T.IntegerType(), True)\
+					,T.StructField("cust_id",T.StringType(),True)\
+					,T.StructField("order_type",T.StringType(),True)])
+df=spark.createDataFrame(data_order,order_schema)
+
+df_group_order_type = df.groupBy("cust_id").agg(F.countDistinct("order_type").alias('order_type'))
+df_final=df.alias('a').join(df_group_order_type.alias('b'),'cust_id','inner').filter((F.col('b.order_type')==1) | ((F.col('b.order_type')==2) & (F.col('a.order_type')==0))).select('a.order_id','a.cust_id','a.order_type').show()
+
+
+#######
+
+Buses table:
++--------+--------------+
+| bus_id | arrival_time |
++--------+--------------+
+| 1   | 2      |
+| 2   | 4      |
+| 3   | 7      |
++--------+--------------+
+
+Passengers table:
++--------------+--------------+
+| passenger_id | arrival_time |
++--------------+--------------+
+| 11      | 1      |
+| 12      | 5      |
+| 13      | 6      |
+| 14      | 7      |
++--------------+--------------+
+Output: 
++--------+----------------+
+| bus_id | passengers_cnt |
++--------+----------------+
+| 1   | 1       |
+| 2   | 0       |
+| 3   | 3       |
++--------+----------------+
+
+
+[1,5,6,7]
+[5,6,7]
+[5,6,7]
+
+p_arr_time,cnt=[1,5,6,7],0
+def fn(b_arr_time):
+	if b_arr_time>p_arr_time[0]:
+		cnt+=1
+		stack.pop(0)
+	else:
+		F.lit(0)
